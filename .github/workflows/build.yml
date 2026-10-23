@@ -19,11 +19,13 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Make Gradle Wrapper Executable
-        run: chmod +x gradlew
+      - name: Setup Gradle 8.12
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.12'
 
       - name: Build with Gradle
-        run: ./gradlew build --no-daemon
+        run: gradle build --no-daemon
 
       - name: Upload Mod Artifact
         uses: actions/upload-artifact@v4

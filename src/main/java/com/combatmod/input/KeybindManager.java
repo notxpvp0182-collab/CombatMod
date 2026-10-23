@@ -8,6 +8,7 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.client.util.Window;
 import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 
@@ -47,20 +48,20 @@ public class KeybindManager {
             return;
         }
 
-        // Do not process module keybinds when any GUI screen (chat, inventory, pause, ClickGUI) is open
+        // Do not process module keybinds when any GUI screen is open
         if (client.currentScreen != null) {
             while (openGuiKeyBinding.wasPressed()) {
-                // Consume presses while screen is open
+                // Consume presses
             }
             while (manualLockKeyBinding.wasPressed()) {
-                // Consume presses while screen is open
+                // Consume presses
             }
             previousKeyStates.clear();
             prevGuiCustomKeyDown = false;
             return;
         }
 
-        long windowHandle = client.getWindow().getHandle();
+        Window window = client.getWindow();
 
         // Check registered Vanilla Options keybind OR custom GUI keybind from ConfigManager
         boolean openGuiTriggered = false;
@@ -70,7 +71,7 @@ public class KeybindManager {
 
         int configuredGuiKey = CombatModClient.getInstance().getConfigManager().getGuiToggleKey();
         if (configuredGuiKey > 0 && configuredGuiKey != GLFW.GLFW_KEY_UNKNOWN) {
-            boolean isDown = InputUtil.isKeyPressed(windowHandle, configuredGuiKey);
+            boolean isDown = InputUtil.isKeyPressed(window, configuredGuiKey);
             if (isDown && !prevGuiCustomKeyDown && openGuiKeyBinding.isUnbound()) {
                 openGuiTriggered = true;
             }
@@ -94,7 +95,7 @@ public class KeybindManager {
         if (aimAssist != null && aimAssist.isEnabled()) {
             int customLockCode = aimAssist.lockKeybind.getValue();
             if (customLockCode > 0 && customLockCode != GLFW.GLFW_KEY_UNKNOWN) {
-                if (wasKeyJustPressed(windowHandle, customLockCode)) {
+                if (wasKeyJustPressed(window, customLockCode)) {
                     lockTriggered = true;
                 }
             }
@@ -103,11 +104,11 @@ public class KeybindManager {
             }
         }
 
-        // Poll each module's independent toggle keybind using edge detection (never intercepts movement keys)
+        // Poll each module's independent toggle keybind using edge detection
         for (Module module : CombatModClient.getInstance().getModuleManager().getModules()) {
             int keyCode = module.getToggleKeybind().getValue();
             if (keyCode > 0 && keyCode != GLFW.GLFW_KEY_UNKNOWN) {
-                if (wasKeyJustPressed(windowHandle, keyCode)) {
+                if (wasKeyJustPressed(window, keyCode)) {
                     module.toggle();
                     CombatModClient.getInstance().getConfigManager().save();
                 }
@@ -115,8 +116,8 @@ public class KeybindManager {
         }
     }
 
-    private boolean wasKeyJustPressed(long windowHandle, int keyCode) {
-        boolean currentlyDown = InputUtil.isKeyPressed(windowHandle, keyCode);
+    private boolean wasKeyJustPressed(Window window, int keyCode) {
+        boolean currentlyDown = InputUtil.isKeyPressed(window, keyCode);
         boolean previouslyDown = previousKeyStates.getOrDefault(keyCode, false);
         previousKeyStates.put(keyCode, currentlyDown);
         return currentlyDown && !previouslyDown;

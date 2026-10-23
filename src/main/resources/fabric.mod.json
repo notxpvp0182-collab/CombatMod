@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "combat",
+  "version": "${version}",
+  "name": "Combat",
+  "description": "Modular client-side combat utility featuring Aim Assist, TriggerBot, Auto Shield Breaker, and a dark Click GUI.",
+  "authors": [
+    "CombatModDev"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.combatmod.CombatModClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": "*",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

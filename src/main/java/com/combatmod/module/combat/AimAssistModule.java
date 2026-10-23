@@ -32,66 +32,78 @@ public class AimAssistModule extends Module {
     public final DoubleSetting reach = addSetting(new DoubleSetting(
             "Reach",
             "Maximum distance in blocks to acquire targets",
-            4.5, 2.0, 8.0, 0.1
+            5.2, 2.0, 10.0, 0.1
     ));
 
     public final DoubleSetting maxAngle = addSetting(new DoubleSetting(
             "MaxAngle",
-            "Maximum field-of-view angle in degrees from crosshair",
-            75.0, 10.0, 180.0, 1.0
+            "Maximum field-of-view angle (Supports full 360° tracking)",
+            360.0, 10.0, 360.0, 5.0
     ));
 
     public final DoubleSetting horizontalSpeed = addSetting(new DoubleSetting(
             "HorizontalSpeed",
-            "Yaw rotation speed in degrees per tick",
-            8.5, 0.5, 35.0, 0.5
+            "Yaw rotation speed",
+            9.5, 0.5, 45.0, 0.5
     ));
 
     public final DoubleSetting verticalSpeed = addSetting(new DoubleSetting(
             "VerticalSpeed",
-            "Pitch rotation speed in degrees per tick",
-            4.5, 0.5, 25.0, 0.5
+            "Pitch rotation speed",
+            6.0, 0.5, 30.0, 0.5
     ));
 
     public final DoubleSetting smoothing = addSetting(new DoubleSetting(
             "Smoothing",
-            "Camera interpolation factor for smooth rotation",
-            0.55, 0.05, 0.95, 0.05
+            "Smooth interpolation factor (higher = more natural/human)",
+            0.62, 0.05, 0.95, 0.02
     ));
 
     public final BooleanSetting adjustPitch = addSetting(new BooleanSetting(
             "AdjustPitch",
-            "Smoothly adjust vertical camera pitch as well as yaw",
+            "Smoothly adjust vertical pitch",
             true
     ));
 
     public final BooleanSetting allowTargetSwitch = addSetting(new BooleanSetting(
             "TargetSwitch",
-            "Automatically switch to a better target when not manually locked",
+            "Automatically switch to better target",
             true
     ));
 
     public final BooleanSetting manualLockEnabled = addSetting(new BooleanSetting(
             "ManualLock",
-            "Allow locking onto a single target using the Lock Keybind",
+            "Allow locking target with keybind",
             true
     ));
 
     public final KeybindSetting lockKeybind = addSetting(new KeybindSetting(
             "LockKey",
-            "Keybind to manually lock/unlock the current target",
+            "Keybind to lock/unlock current target",
             GLFW.GLFW_KEY_UNKNOWN
     ));
 
     public final BooleanSetting showIndicator = addSetting(new BooleanSetting(
             "TargetIndicator",
-            "Render a HUD target indicator and health bar when a target is active",
+            "Render HUD target box (Can be dragged in Click GUI)",
             true
+    ));
+
+    public final DoubleSetting hudPosX = addSetting(new DoubleSetting(
+            "HudPosX",
+            "Target HUD horizontal screen position (%)",
+            55.0, 0.0, 100.0, 1.0
+    ));
+
+    public final DoubleSetting hudPosY = addSetting(new DoubleSetting(
+            "HudPosY",
+            "Target HUD vertical screen position (%)",
+            55.0, 0.0, 100.0, 1.0
     ));
 
     public final BooleanSetting requireLineOfSight = addSetting(new BooleanSetting(
             "LineOfSight",
-            "Only assist aim toward visible targets",
+            "Only assist toward visible targets",
             true
     ));
 
@@ -103,7 +115,7 @@ public class AimAssistModule extends Module {
 
     public final BooleanSetting unlockOnFocusLost = addSetting(new BooleanSetting(
             "UnlockOnBlur",
-            "Release manual target lock if the game window loses focus",
+            "Release lock if window loses focus",
             true
     ));
 
@@ -111,7 +123,7 @@ public class AimAssistModule extends Module {
     private LivingEntity lockedTarget;
 
     public AimAssistModule() {
-        super("AimAssist", "Configurable smooth camera rotation toward valid combat targets.", Category.COMBAT);
+        super("AimAssist", "Humanized 360 smooth camera tracking toward valid combat targets.", Category.COMBAT);
     }
 
     @Override
@@ -144,7 +156,7 @@ public class AimAssistModule extends Module {
         if (client.crosshairTarget instanceof EntityHitResult hitResult) {
             Entity hit = hitResult.getEntity();
             if (TargetUtil.isValidTarget(
-                    client.player, hit, reach.getValue(), 180.0,
+                    client.player, hit, reach.getValue(), 360.0,
                     targetMode.getValue(), ignoreInvisible.getValue(), requireLineOfSight.getValue())) {
                 lockedTarget = (LivingEntity) hit;
                 currentTarget = lockedTarget;
@@ -180,13 +192,12 @@ public class AimAssistModule extends Module {
             return;
         }
 
-        // Validate manual lock target
         if (lockedTarget != null) {
             boolean stillValid = manualLockEnabled.getValue() && TargetUtil.isValidTarget(
                     client.player,
                     lockedTarget,
                     reach.getValue(),
-                    180.0,
+                    360.0,
                     targetMode.getValue(),
                     ignoreInvisible.getValue(),
                     requireLineOfSight.getValue()
@@ -199,7 +210,6 @@ public class AimAssistModule extends Module {
         if (lockedTarget != null) {
             currentTarget = lockedTarget;
         } else {
-            // Validate existing automatic target if TargetSwitch is disabled
             boolean keepCurrent = !allowTargetSwitch.getValue()
                     && currentTarget != null
                     && TargetUtil.isValidTarget(

@@ -8,6 +8,7 @@ import com.combatmod.config.KeybindSetting;
 import com.combatmod.config.Setting;
 import com.combatmod.module.Category;
 import com.combatmod.module.Module;
+import com.combatmod.module.combat.AimAssistModule;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -23,7 +24,6 @@ import java.util.Locale;
 import java.util.stream.Collectors;
 
 public class CombatClickGuiScreen extends Screen {
-    // Meteor-inspired dark charcoal palette with subtle red and green accents
     private static final int COL_BG_WINDOW = 0xF2121317;
     private static final int COL_BG_SIDEBAR = 0xF5181A20;
     private static final int COL_BG_PANEL = 0xF21A1D24;
@@ -43,6 +43,10 @@ public class CombatClickGuiScreen extends Screen {
     private DoubleSetting draggingSlider = null;
     private int draggingSliderX = 0;
     private int draggingSliderWidth = 1;
+
+    private boolean isDraggingHud = false;
+    private int hudDragOffsetX = 0;
+    private int hudDragOffsetY = 0;
 
     private KeybindSetting listeningKeybind = null;
     private boolean listeningForGuiKey = false;
@@ -70,6 +74,7 @@ public class CombatClickGuiScreen extends Screen {
     public void removed() {
         super.removed();
         draggingSlider = null;
+        isDraggingHud = false;
         listeningKeybind = null;
         listeningForGuiKey = false;
         CombatModClient.getInstance().getConfigManager().save();
@@ -110,16 +115,15 @@ public class CombatClickGuiScreen extends Screen {
         int winX = getWindowX();
         int winY = getWindowY();
 
-        // Outer window frame & top accent bar
         context.fill(winX - 1, winY - 1, winX + winW + 1, winY + winH + 1, COL_BORDER);
         context.fill(winX, winY, winX + winW, winY + winH, COL_BG_WINDOW);
         context.fill(winX, winY, winX + winW, winY + 2, COL_ACCENT_RED);
 
-        // Header bar (Title + Search Box + GUI Keybind + Reset All button)
+        // Header
         context.fill(winX, winY + 2, winX + winW, winY + 30, COL_BG_SIDEBAR);
         context.drawTextWithShadow(this.textRenderer, "COMBAT CLIENT", winX + 10, winY + 11, COL_TEXT_PRIMARY);
 
-        // Search input box
+        // Search box
         int searchX = winX + 115;
         int searchY = winY + 7;
         int searchW = 165;
@@ -133,7 +137,7 @@ public class CombatClickGuiScreen extends Screen {
         int searchTextColor = searchQuery.isEmpty() && !searchFocused ? COL_TEXT_MUTED : COL_TEXT_PRIMARY;
         context.drawTextWithShadow(this.textRenderer, displaySearch, searchX + 6, searchY + 5, searchTextColor);
 
-        // GUI Keybind button in header
+        // GUI Keybind button
         int guiKeyBtnW = 96;
         int guiKeyBtnX = winX + winW - guiKeyBtnW - 82;
         int guiKeyBtnY = winY + 7;
@@ -144,7 +148,7 @@ public class CombatClickGuiScreen extends Screen {
                 : "GUI: " + formatKey(CombatModClient.getInstance().getConfigManager().getGuiToggleKey());
         context.drawTextWithShadow(this.textRenderer, guiKeyLabel, guiKeyBtnX + 5, guiKeyBtnY + 5, COL_TEXT_MUTED);
 
-        // Reset Config button in header
+        // Reset All button
         int resetBtnW = 70;
         int resetBtnX = winX + winW - resetBtnW - 8;
         int resetBtnY = winY + 7;
@@ -152,7 +156,7 @@ public class CombatClickGuiScreen extends Screen {
         context.fill(resetBtnX, resetBtnY, resetBtnX + resetBtnW, resetBtnY + 18, hoverReset ? COL_ACCENT_RED : COL_BG_CARD);
         context.drawTextWithShadow(this.textRenderer, "Reset All", resetBtnX + 11, resetBtnY + 5, COL_TEXT_PRIMARY);
 
-        // Left Category Sidebar
+        // Sidebar
         int sidebarW = 92;
         int contentTop = winY + 31;
         int contentBottom = winY + winH;
@@ -171,20 +175,18 @@ public class CombatClickGuiScreen extends Screen {
             catY += 26;
         }
 
-        // Module List Column
+        // Module list
         int modListX = winX + sidebarW + 6;
         int modListW = selectedModuleForSettings == null ? (winW - sidebarW - 12) : 165;
         int modY = contentTop + 8;
 
-        List<Module> modules = getFilteredModules();
-        for (Module module : modules) {
+        for (Module module : getFilteredModules()) {
             boolean hovered = isHovered(mouseX, mouseY, modListX, modY, modListW, 30);
             boolean settingsOpen = module == selectedModuleForSettings;
 
             context.fill(modListX, modY, modListX + modListW, modY + 30,
                     hovered || settingsOpen ? COL_BG_CARD_HOVER : COL_BG_CARD);
 
-            // Left status indicator bar (Green = ON, Red = OFF)
             int statusCol = module.isEnabled() ? COL_ACCENT_GREEN : COL_ACCENT_RED;
             context.fill(modListX, modY, modListX + 3, modY + 30, statusCol);
 
@@ -199,7 +201,7 @@ public class CombatClickGuiScreen extends Screen {
             modY += 35;
         }
 
-        // Right Scrollable Settings Panel (when a module is right-clicked)
+        // Settings panel
         if (selectedModuleForSettings != null) {
             int panelX = modListX + modListW + 6;
             int panelW = (winX + winW) - panelX - 6;
@@ -211,7 +213,6 @@ public class CombatClickGuiScreen extends Screen {
             context.drawTextWithShadow(this.textRenderer,
                     selectedModuleForSettings.getName() + " Settings", panelX + 8, panelTop + 7, COL_TEXT_PRIMARY);
 
-            // Reset Module Defaults button inside settings header
             int modResetW = 42;
             int modResetX = panelX + panelW - modResetW - 4;
             int modResetY = panelTop + 3;
@@ -239,7 +240,6 @@ public class CombatClickGuiScreen extends Screen {
 
             context.disableScissor();
 
-            // Scrollbar indicator
             if (maxSettingsScroll > 0) {
                 int trackH = scissorBottom - scissorTop;
                 int thumbH = Math.max(18, (int) ((double) visibleHeight / (contentHeight + 10) * trackH));
@@ -268,7 +268,7 @@ public class CombatClickGuiScreen extends Screen {
 
         if (setting instanceof DoubleSetting doubleSetting) {
             context.fill(x, y, x + width, y + 30, COL_BG_CARD);
-            String label = String.format(Locale.ROOT, "%s: %.2f", doubleSetting.getName(), doubleSetting.getValue());
+            String label = String.format(Locale.ROOT, "%s: %.1f", doubleSetting.getName(), doubleSetting.getValue());
             context.drawTextWithShadow(this.textRenderer, label, x + 6, y + 5, COL_TEXT_PRIMARY);
 
             int barX = x + 6;
@@ -311,12 +311,23 @@ public class CombatClickGuiScreen extends Screen {
         double mouseY = click.y();
         int button = click.button();
 
+        AimAssistModule aimAssist = CombatModClient.getInstance().getModuleManager().getModule(AimAssistModule.class);
+        if (aimAssist != null && aimAssist.showIndicator.getValue()) {
+            int hudX = HudOverlayRenderer.getRenderX(this.client, aimAssist, this.width);
+            int hudY = HudOverlayRenderer.getRenderY(this.client, aimAssist, this.height);
+            if (isHovered(mouseX, mouseY, hudX, hudY, HudOverlayRenderer.BOX_WIDTH, HudOverlayRenderer.BOX_HEIGHT)) {
+                isDraggingHud = true;
+                hudDragOffsetX = (int) mouseX - hudX;
+                hudDragOffsetY = (int) mouseY - hudY;
+                return true;
+            }
+        }
+
         int winW = getWindowWidth();
         int winH = getWindowHeight();
         int winX = getWindowX();
         int winY = getWindowY();
 
-        // Search box focus check
         int searchX = winX + 115;
         int searchY = winY + 7;
         searchFocused = isHovered(mouseX, mouseY, searchX, searchY, 165, 18);
@@ -325,7 +336,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // GUI Keybind button in header
         int guiKeyBtnW = 96;
         int guiKeyBtnX = winX + winW - guiKeyBtnW - 82;
         int guiKeyBtnY = winY + 7;
@@ -335,7 +345,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // Reset All button in header
         int resetBtnW = 70;
         int resetBtnX = winX + winW - resetBtnW - 8;
         int resetBtnY = winY + 7;
@@ -344,7 +353,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // Sidebar category clicks
         int sidebarW = 92;
         int contentTop = winY + 31;
         int catY = contentTop + 10;
@@ -356,7 +364,6 @@ public class CombatClickGuiScreen extends Screen {
             catY += 26;
         }
 
-        // Module cards (Left-click = toggle, Right-click = toggle settings panel)
         int modListX = winX + sidebarW + 6;
         int modListW = selectedModuleForSettings == null ? (winW - sidebarW - 12) : 165;
         int modY = contentTop + 8;
@@ -381,7 +388,6 @@ public class CombatClickGuiScreen extends Screen {
             modY += 35;
         }
 
-        // Settings panel interactions
         if (selectedModuleForSettings != null) {
             int panelX = modListX + modListW + 6;
             int panelW = (winX + winW) - panelX - 6;
@@ -450,6 +456,18 @@ public class CombatClickGuiScreen extends Screen {
 
     @Override
     public boolean mouseDragged(Click click, double offsetX, double offsetY) {
+        if (isDraggingHud) {
+            AimAssistModule aimAssist = CombatModClient.getInstance().getModuleManager().getModule(AimAssistModule.class);
+            if (aimAssist != null && this.width > 0 && this.height > 0) {
+                double targetX = click.x() - hudDragOffsetX;
+                double targetY = click.y() - hudDragOffsetY;
+                double pctX = MathHelper.clamp((targetX / this.width) * 100.0, 0.0, 100.0);
+                double pctY = MathHelper.clamp((targetY / this.height) * 100.0, 0.0, 100.0);
+                aimAssist.hudPosX.setValue(pctX);
+                aimAssist.hudPosY.setValue(pctY);
+                return true;
+            }
+        }
         if (draggingSlider != null && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             updateSliderFromMouse(click.x());
             return true;
@@ -459,6 +477,11 @@ public class CombatClickGuiScreen extends Screen {
 
     @Override
     public boolean mouseReleased(Click click) {
+        if (isDraggingHud) {
+            isDraggingHud = false;
+            CombatModClient.getInstance().getConfigManager().save();
+            return true;
+        }
         if (draggingSlider != null) {
             draggingSlider = null;
             CombatModClient.getInstance().getConfigManager().save();
@@ -489,7 +512,6 @@ public class CombatClickGuiScreen extends Screen {
     public boolean keyPressed(KeyInput input) {
         int keyCode = input.key();
 
-        // Handle custom GUI keybind binding mode
         if (listeningForGuiKey) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE || keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
                 CombatModClient.getInstance().getConfigManager().setGuiToggleKey(GLFW.GLFW_KEY_RIGHT_SHIFT);
@@ -501,7 +523,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // Handle module keybind binding mode
         if (listeningKeybind != null) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE || keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
                 listeningKeybind.unbind();
@@ -513,7 +534,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // Handle search bar editing
         if (searchFocused) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE || keyCode == GLFW.GLFW_KEY_ENTER) {
                 searchFocused = false;
@@ -526,7 +546,6 @@ public class CombatClickGuiScreen extends Screen {
             return true;
         }
 
-        // Pressing Escape closes the open module settings panel first, or closes the GUI if none open
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             if (selectedModuleForSettings != null) {
                 selectedModuleForSettings = null;

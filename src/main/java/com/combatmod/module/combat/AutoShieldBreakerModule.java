@@ -16,6 +16,7 @@ import net.minecraft.item.AxeItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.item.MaceItem;
+import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.EntityHitResult;
@@ -25,7 +26,7 @@ public class AutoShieldBreakerModule extends Module {
     public enum WeaponPreference {
         AXES_ONLY("Axes Only"),
         AXES_AND_MACES("Axes & Maces"),
-        ANY_SHIELD_DISABLER("Any Shield-Disabling Weapon");
+        ANY_SHIELD_DISABLER("Any Shield-Disabler");
 
         private final String label;
 
@@ -41,38 +42,44 @@ public class AutoShieldBreakerModule extends Module {
 
     public final EnumSetting<WeaponPreference> weaponPreference = addSetting(new EnumSetting<>(
             "WeaponType",
-            "Which weapons are eligible to break shields",
+            "Eligible shield-breaking weapons",
             WeaponPreference.AXES_ONLY
+    ));
+
+    public final DoubleSetting breakRange = addSetting(new DoubleSetting(
+            "Range",
+            "Reach distance to break enemy shield",
+            4.5, 2.5, 6.0, 0.1
     ));
 
     public final DoubleSetting switchDelayTicks = addSetting(new DoubleSetting(
             "SwitchDelayTicks",
-            "Ticks to wait before switching to the axe/breaker slot",
-            1.0, 0.0, 10.0, 1.0
+            "Delay before switching to axe",
+            0.0, 0.0, 5.0, 1.0
     ));
 
     public final DoubleSetting attackDelayTicks = addSetting(new DoubleSetting(
             "AttackDelayTicks",
-            "Ticks to wait after switching before striking the shield",
-            1.0, 0.0, 10.0, 1.0
+            "Delay after switching before attacking",
+            1.0, 0.0, 8.0, 1.0
     ));
 
     public final DoubleSetting restoreDelayTicks = addSetting(new DoubleSetting(
             "RestoreDelayTicks",
-            "Ticks to wait after striking before restoring the previous hotbar slot",
-            2.0, 0.0, 15.0, 1.0
+            "Delay before restoring original slot",
+            2.0, 0.0, 10.0, 1.0
     ));
 
     public final BooleanSetting restorePreviousSlot = addSetting(new BooleanSetting(
             "RestoreSlot",
-            "Restore the original hotbar slot if you have not manually changed slots",
+            "Restore previous hotbar slot after breaking",
             true
     ));
 
     public final BooleanSetting requireCooldown = addSetting(new BooleanSetting(
             "RespectCooldown",
-            "Wait for normal attack cooldown before striking",
-            true
+            "Wait for weapon attack cooldown before striking",
+            false
     ));
 
     private enum State {
@@ -86,15 +93,16 @@ public class AutoShieldBreakerModule extends Module {
     private int savedOriginalSlot = -1;
     private int activeBreakerSlot = -1;
     private int timerTicks = 0;
+    private LivingEntity targetEntity = null;
 
     public AutoShieldBreakerModule() {
-        super("AutoShieldBreaker", "Switches to an eligible hotbar axe/weapon to disable a blocking target's shield and safely restores your slot.", Category.COMBAT);
+        super("AutoShieldBreaker", "Auto-switches to axe, disables blocking target's shield, and restores slot.", Category.COMBAT);
     }
 
     @Override
     protected void onDisable(MinecraftClient client) {
         if (client != null && client.player != null) {
-            safelyRestoreSlot(client.player);
+            safelyRestoreSlot(client);
         }
         resetState();
     }
@@ -104,6 +112,7 @@ public class AutoShieldBreakerModule extends Module {
         savedOriginalSlot = -1;
         activeBreakerSlot = -1;
         timerTicks = 0;
+        targetEntity = null;
     }
 
     @Override
@@ -114,7 +123,7 @@ public class AutoShieldBreakerModule extends Module {
         }
 
         if (client.currentScreen != null || !client.isWindowFocused()) {
-            safelyRestoreSlot(client.player);
+            safelyRestoreSlot(client);
             resetState();
             return;
         }
@@ -122,10 +131,8 @@ public class AutoShieldBreakerModule extends Module {
         ClientPlayerEntity player = client.player;
         PlayerInventory inventory = player.getInventory();
 
-        // Detect if user manually changed hotbar slot during an operation
         if (state == State.WAITING_TO_ATTACK || state == State.WAITING_TO_RESTORE) {
             if (inventory.getSelectedSlot() != activeBreakerSlot) {
-                // User manually selected another slot — do not overwrite their choice!
                 resetState();
                 return;
             }
@@ -134,16 +141,16 @@ public class AutoShieldBreakerModule extends Module {
         if (state == State.WAITING_TO_RESTORE) {
             timerTicks++;
             if (timerTicks >= restoreDelayTicks.getIntValue()) {
-                safelyRestoreSlot(player);
+                safelyRestoreSlot(client);
                 resetState();
             }
             return;
         }
 
-        LivingEntity blockingTarget = getCrosshairBlockingTarget(client);
-        if (blockingTarget == null || player.isUsingItem()) {
+        targetEntity = findShieldBlockingTarget(client);
+        if (targetEntity == null || player.isUsingItem()) {
             if (state == State.WAITING_TO_ATTACK) {
-                safelyRestoreSlot(player);
+                safelyRestoreSlot(client);
             }
             resetState();
             return;
@@ -165,10 +172,7 @@ public class AutoShieldBreakerModule extends Module {
             case WAITING_TO_SWITCH -> {
                 timerTicks++;
                 if (timerTicks >= switchDelayTicks.getIntValue()) {
-                    if (inventory.getSelectedSlot() != breakerSlot) {
-                        savedOriginalSlot = inventory.getSelectedSlot();
-                        inventory.setSelectedSlot(breakerSlot);
-                    }
+                    changeHotbarSlot(client, breakerSlot);
                     activeBreakerSlot = breakerSlot;
                     timerTicks = 0;
                     state = State.WAITING_TO_ATTACK;
@@ -179,10 +183,10 @@ public class AutoShieldBreakerModule extends Module {
                 if (timerTicks < attackDelayTicks.getIntValue()) {
                     return;
                 }
-                if (requireCooldown.getValue() && player.getAttackCooldownProgress(0.5f) < 0.90f) {
+                if (requireCooldown.getValue() && player.getAttackCooldownProgress(0.5f) < 0.85f) {
                     return;
                 }
-                client.interactionManager.attackEntity(player, blockingTarget);
+                client.interactionManager.attackEntity(player, targetEntity);
                 player.swingHand(Hand.MAIN_HAND);
                 timerTicks = 0;
                 if (restorePreviousSlot.getValue() && savedOriginalSlot != -1 && savedOriginalSlot != activeBreakerSlot) {
@@ -195,33 +199,50 @@ public class AutoShieldBreakerModule extends Module {
         }
     }
 
-    private void safelyRestoreSlot(ClientPlayerEntity player) {
-        if (!restorePreviousSlot.getValue() || savedOriginalSlot < 0 || savedOriginalSlot >= 9) {
-            return;
-        }
-        PlayerInventory inventory = player.getInventory();
-        // Only restore if the current slot is still the one we switched to
-        if (activeBreakerSlot != -1 && inventory.getSelectedSlot() == activeBreakerSlot) {
-            inventory.setSelectedSlot(savedOriginalSlot);
+    private void changeHotbarSlot(MinecraftClient client, int slot) {
+        if (client.player == null) return;
+        client.player.getInventory().setSelectedSlot(slot);
+        if (client.getNetworkHandler() != null) {
+            client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(slot));
         }
     }
 
-    private LivingEntity getCrosshairBlockingTarget(MinecraftClient client) {
-        HitResult hit = client.crosshairTarget;
-        if (!(hit instanceof EntityHitResult entityHit)) {
-            return null;
+    private void safelyRestoreSlot(MinecraftClient client) {
+        if (!restorePreviousSlot.getValue() || savedOriginalSlot < 0 || savedOriginalSlot >= 9 || client.player == null) {
+            return;
         }
-        Entity entity = entityHit.getEntity();
-        if (!(entity instanceof LivingEntity living) || !living.isAlive() || living.isRemoved()) {
-            return null;
+        if (activeBreakerSlot != -1 && client.player.getInventory().getSelectedSlot() == activeBreakerSlot) {
+            changeHotbarSlot(client, savedOriginalSlot);
         }
-        if (isEntityBlockingWithShield(living)) {
-            return living;
+    }
+
+    private LivingEntity findShieldBlockingTarget(MinecraftClient client) {
+        if (client.player == null || client.world == null) return null;
+
+        // 1. Check direct crosshair hit
+        if (client.crosshairTarget instanceof EntityHitResult entityHit) {
+            Entity ent = entityHit.getEntity();
+            if (ent instanceof LivingEntity living && living.isAlive() && isBlockingShield(living)) {
+                if (client.player.squaredDistanceTo(living) <= breakRange.getValue() * breakRange.getValue()) {
+                    return living;
+                }
+            }
+        }
+
+        // 2. Search nearby blocking targets within breakRange
+        double maxDistSq = breakRange.getValue() * breakRange.getValue();
+        for (Entity ent : client.world.getEntities()) {
+            if (ent == client.player || !(ent instanceof LivingEntity living) || !living.isAlive()) {
+                continue;
+            }
+            if (client.player.squaredDistanceTo(living) <= maxDistSq && isBlockingShield(living) && client.player.canSee(living)) {
+                return living;
+            }
         }
         return null;
     }
 
-    private boolean isEntityBlockingWithShield(LivingEntity entity) {
+    private boolean isBlockingShield(LivingEntity entity) {
         if (entity.isBlocking()) {
             return true;
         }
@@ -231,35 +252,37 @@ public class AutoShieldBreakerModule extends Module {
                 return active.isOf(Items.SHIELD) || active.get(DataComponentTypes.BLOCKS_ATTACKS) != null;
             }
         }
+        ItemStack offhand = entity.getOffHandStack();
+        if (!offhand.isEmpty() && offhand.isOf(Items.SHIELD) && entity.isUsingItem()) {
+            return true;
+        }
         return false;
     }
 
     private int findEligibleHotbarSlot(PlayerInventory inventory) {
         int current = inventory.getSelectedSlot();
-        if (isEligibleBreakerWeapon(inventory.getStack(current))) {
+        if (isBreaker(inventory.getStack(current))) {
             return current;
         }
-        for (int slot = 0; slot < 9; slot++) {
-            if (isEligibleBreakerWeapon(inventory.getStack(slot))) {
-                return slot;
+        for (int i = 0; i < 9; i++) {
+            if (isBreaker(inventory.getStack(i))) {
+                return i;
             }
         }
         return -1;
     }
 
-    private boolean isEligibleBreakerWeapon(ItemStack stack) {
-        if (stack == null || stack.isEmpty()) {
-            return false;
-        }
+    private boolean isBreaker(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
         boolean isAxe = stack.getItem() instanceof AxeItem || stack.isIn(ItemTags.AXES);
         boolean isMace = stack.getItem() instanceof MaceItem || stack.isOf(Items.MACE);
-        WeaponComponent weaponComponent = stack.get(DataComponentTypes.WEAPON);
-        boolean disablesShields = weaponComponent != null && weaponComponent.disableBlockingForSeconds() > 0.0f;
+        WeaponComponent wc = stack.get(DataComponentTypes.WEAPON);
+        boolean disables = wc != null && wc.disableBlockingForSeconds() > 0.0f;
 
         return switch (weaponPreference.getValue()) {
             case AXES_ONLY -> isAxe;
             case AXES_AND_MACES -> isAxe || isMace;
-            case ANY_SHIELD_DISABLER -> isAxe || isMace || disablesShields;
+            case ANY_SHIELD_DISABLER -> isAxe || isMace || disables;
         };
     }
 }

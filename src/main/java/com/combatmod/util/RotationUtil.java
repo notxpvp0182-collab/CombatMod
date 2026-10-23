@@ -2,6 +2,7 @@ package com.combatmod.util;
 
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
@@ -10,11 +11,10 @@ public final class RotationUtil {
     }
 
     public static Vec3d getTargetAimPoint(ClientPlayerEntity player, Entity target) {
-        Vec3d eyePos = player.getEyePos();
-        double minY = target.getBoundingBox().minY + target.getHeight() * 0.15;
-        double maxY = target.getBoundingBox().maxY - target.getHeight() * 0.1;
-        double clampedY = MathHelper.clamp(eyePos.y, minY, maxY);
-        return new Vec3d(target.getX(), clampedY, target.getZ());
+        Box box = target.getBoundingBox();
+        // Target upper chest / center of mass for reliable hits without slipping
+        double targetY = box.minY + (target.getHeight() * 0.65);
+        return new Vec3d(target.getX(), targetY, target.getZ());
     }
 
     public static float[] getRequiredRotations(ClientPlayerEntity player, Vec3d targetVec) {
@@ -42,8 +42,7 @@ public final class RotationUtil {
     }
 
     /**
-     * Smoothly interpolates the player's camera yaw/pitch toward the target entity
-     * without locking the camera or interfering with WASD / mouse movement.
+     * Flexible, organic 360 tracking that sticks to target body like a real human player.
      */
     public static void applySmoothRotation(
             ClientPlayerEntity player,
@@ -58,22 +57,27 @@ public final class RotationUtil {
 
         float yawDelta = MathHelper.wrapDegrees(targetRotations[0] - player.getYaw());
         float pitchDelta = targetRotations[1] - player.getPitch();
+        double totalDelta = Math.hypot(yawDelta, pitchDelta);
 
-        // Deadzone so micro-movements don't fight the player's mouse when already aimed on target
-        if (Math.abs(yawDelta) < 0.15f && (!adjustPitch || Math.abs(pitchDelta) < 0.15f)) {
+        // Sticky deadzone: if already on target chest/body, don't jitter
+        if (totalDelta < 0.25) {
             return;
         }
 
-        float smoothMultiplier = MathHelper.clamp(1.0f - (smoothingFactor * 0.85f), 0.05f, 1.0f);
-        float maxYawStep = horizontalSpeed * smoothMultiplier;
-        float maxPitchStep = verticalSpeed * smoothMultiplier;
+        // Proportional organic curve (smooth human-like easing)
+        float progress = MathHelper.clamp(1.0f - (smoothingFactor * 0.75f), 0.08f, 0.95f);
+        
+        // Sticky dynamic speed adjustment: speeds up when turning, glides smoothly near target
+        float speedScale = (float) Math.min(1.0, Math.max(0.2, totalDelta / 45.0));
+        float maxYawStep = Math.max(0.5f, horizontalSpeed * speedScale);
+        float maxPitchStep = Math.max(0.3f, verticalSpeed * speedScale);
 
-        float appliedYawStep = MathHelper.clamp(yawDelta * smoothMultiplier, -maxYawStep, maxYawStep);
-        player.setYaw(player.getYaw() + appliedYawStep);
+        float stepYaw = MathHelper.clamp(yawDelta * progress, -maxYawStep, maxYawStep);
+        player.setYaw(player.getYaw() + stepYaw);
 
         if (adjustPitch) {
-            float appliedPitchStep = MathHelper.clamp(pitchDelta * smoothMultiplier, -maxPitchStep, maxPitchStep);
-            player.setPitch(MathHelper.clamp(player.getPitch() + appliedPitchStep, -90.0f, 90.0f));
+            float stepPitch = MathHelper.clamp(pitchDelta * progress, -maxPitchStep, maxPitchStep);
+            player.setPitch(MathHelper.clamp(player.getPitch() + stepPitch, -90.0f, 90.0f));
         }
     }
 }
